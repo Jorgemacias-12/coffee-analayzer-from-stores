@@ -114,10 +114,15 @@ def build_time_range(
         24,
     )
 
+    start_formatted = format_hour(start)
+    end_formatted = (
+        format_hour(end if end < 24 else 0)
+    )
+
     return (
-        f"{format_hour(start)}"
+        f"{start_formatted}"
         f" - "
-        f"{format_hour(end)}"
+        f"{end_formatted}"
     )
 
 

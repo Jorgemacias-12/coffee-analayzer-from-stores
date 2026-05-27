@@ -52,6 +52,11 @@ def filter_products(
         .fillna("")
         .astype(str)
         .str.strip()
+        .str.replace(
+            r'\s+',
+            ' ',
+            regex=True
+        )
     )
 
     include = (
@@ -80,6 +85,26 @@ def filter_products(
             ~exclude
         ]
         .copy()
+    )
+
+    result[
+        CONFIG.product_column
+    ] = (
+        result[
+            CONFIG.product_column
+        ]
+        .astype(str)
+        .str.strip()
+        .str.replace(
+            r'\s+',
+            ' ',
+            regex=True
+        )
+    )
+
+    result = (
+        result.drop_duplicates()
+        .reset_index(drop=True)
     )
 
     return result

@@ -7,36 +7,58 @@ from openpyxl.styles import (
     PatternFill,
     Alignment
 )
-from openpyxl.chart import BarChart, Reference
+from openpyxl.chart import PieChart, Reference
+from openpyxl.chart.series import DataPoint
+from openpyxl.chart.label import DataLabelList
+
+
+def normalize_product_name(product_name):
+    """Normaliza nombres de productos para comparación consistente"""
+    if pd.isna(product_name):
+        return ""
+    return (
+        str(product_name)
+        .strip()
+        .lower()
+        .replace("café", "cafe")
+        .replace("  ", " ")
+    )
 
 
 def build_store_report(
     df,
 ):
 
-    grouped = (
-
-        df.groupby(
-            [
-                "Fecha",
-                "Hora",
-                CONFIG.product_column,
-            ],
-            as_index=False,
-        )
-
-        .size()
-
-        .rename(
-            columns={
-                CONFIG.product_column:
-                    "Producto",
-
-                "size":
-                    "Cant Venta",
-            }
-        )
+    # Normalizar nombres de productos para evitar duplicados por diferencias de casing/espacios
+    df_copy = df.copy()
+    df_copy["producto_normalizado"] = df_copy[CONFIG.product_column].apply(
+        normalize_product_name
     )
+
+    # Agrupar por fecha, hora y producto normalizado, contando ocurrencias
+    sales_counts = df_copy.groupby(
+        [
+            "Fecha",
+            "Hora",
+            "producto_normalizado",
+        ],
+        as_index=False,
+    ).size().rename(columns={"size": "Cant Venta"})
+
+    # Obtener el producto original (sin normalizar) para cada grupo
+    product_map = (
+        df_copy.groupby("producto_normalizado")[CONFIG.product_column]
+        .first()
+        .to_dict()
+    )
+
+    sales_counts["Producto"] = sales_counts["producto_normalizado"].map(
+        product_map)
+
+    # Mantener solo las columnas requeridas
+    grouped = sales_counts[
+        ["Fecha", "Hora", "Producto", "Cant Venta"]
+    ].copy()
 
     rows = []
 
@@ -177,26 +199,19 @@ def export_reports(
             f"Generando {store}"
         )
 
-        report = (
-            build_store_report(
-                df[
-                    df[
-                        CONFIG.store_column
-                    ]
-                    ==
-                    store
-                ]
-            )
+        # 1. Conservamos el reporte original para cálculos limpios
+        raw_report = build_store_report(
+            df[df[CONFIG.store_column] == store]
         )
 
-        report = report[
+        report = raw_report[
             [
                 "Producto",
                 "Fecha",
                 "Hora",
                 "Cant Venta",
             ]
-        ]
+        ].copy()
 
         path = (
             folder
@@ -249,18 +264,17 @@ def export_reports(
                 )
             )
 
-            # --- NUEVA LÓGICA PARA GRÁFICAS Y DISEÑO ---
+            # --- NUEVA LÓGICA CORREGIDA PARA GRÁFICAS Y DISEÑO ---
 
-            # Guardaremos los límites de inicio y fin de cada día para graficar individualmente
-            day_blocks = []
+            # Estilizado de filas de resumen (INTERVALO MÁS VENDIDO)
             start_row = 2
             current_date_str = ""
 
+            # Estilizado de filas de resumen y detección de bloques
             for row in range(
                 2,
                 ws.max_row + 1,
             ):
-                # Detectar la fecha actual del bloque
                 val_fecha = ws.cell(row, 2).value
                 if val_fecha and val_fecha != "":
                     current_date_str = str(val_fecha)
@@ -275,11 +289,6 @@ def export_reports(
                 ):
                     continue
 
-                # Al llegar a "INTERVALO MÁS VENDIDO", sabemos que el bloque del día termina en la fila anterior
-                end_row = row - 1
-                if end_row >= start_row:
-                    day_blocks.append((start_row, end_row, current_date_str))
-
                 interval = (
                     ws.cell(
                         row,
@@ -287,7 +296,7 @@ def export_reports(
                     ).value
                 )
 
-                # limpiar fila de datos crudos
+                # limpiar fila
                 for col in range(
                     1,
                     5,
@@ -341,61 +350,99 @@ def export_reports(
                         align
                     )
 
-                # El siguiente bloque de día empezará dos filas abajo (saltando este resumen)
                 start_row = row + 1
 
-            # --- GENERACIÓN DE GRÁFICAS POR BLOQUE DE DÍA ---
-            # Colocaremos las gráficas a la derecha de la tabla (Columna F)
-            chart_placement_row = 2
-
-            for b_start, b_end, b_date in day_blocks:
-                chart = BarChart()
-                chart.type = "col"
-                chart.style = 10
-                chart.title = f"Ventas por Producto - {b_date}"
-                chart.y_axis.title = "Cantidad"
-                chart.x_axis.title = "Productos"
-                chart.height = 12  # Tamaño adaptado para que se vea bien
+            # --- GRÁFICOS SIMPLES Y DIRECTOS ---
+            
+            # Calcular totales por fecha/hora desde raw_report
+            raw_report["Cant Venta"] = pd.to_numeric(
+                raw_report["Cant Venta"], errors="coerce").fillna(0).astype(int)
+            
+            hourly_totals = raw_report.groupby(["Fecha", "Hora"])["Cant Venta"].sum().reset_index()
+            
+            # Obtener bloques de fechas (detectar dónde cambia la fecha en el Excel)
+            date_blocks = {}
+            current_date = None
+            block_start = 2
+            
+            for row in range(2, ws.max_row + 1):
+                cell_date = ws.cell(row, 2).value
+                
+                if cell_date is None or cell_date == "Fecha":
+                    continue
+                
+                cell_date_str = str(cell_date).split()[0]  # Extraer solo la fecha, sin hora
+                
+                if current_date != cell_date_str:
+                    if current_date is not None:
+                        if current_date not in date_blocks:
+                            date_blocks[current_date] = []
+                        date_blocks[current_date].append((block_start, row - 1))
+                    
+                    current_date = cell_date_str
+                    block_start = row
+            
+            # Agregar el último bloque
+            if current_date is not None and current_date not in date_blocks:
+                date_blocks[current_date] = []
+            if current_date is not None:
+                date_blocks[current_date].append((block_start, ws.max_row))
+            
+            # Generar gráficos para cada fecha
+            chart_row = 2
+            aux_col_row = 2
+            
+            for date_key in sorted(date_blocks.keys()):
+                # Obtener datos de esta fecha
+                date_data = hourly_totals[hourly_totals["Fecha"].astype(str).str.contains(date_key)]
+                
+                if date_data.empty:
+                    continue
+                
+                # Escribir tabla auxiliar
+                ws.cell(aux_col_row, 11).value = "Hora"
+                ws.cell(aux_col_row, 12).value = "Ventas"
+                aux_col_row += 1
+                
+                start_data_row = aux_col_row
+                for _, row_data in date_data.iterrows():
+                    ws.cell(aux_col_row, 11).value = row_data["Hora"]
+                    ws.cell(aux_col_row, 12).value = int(row_data["Cant Venta"])
+                    aux_col_row += 1
+                
+                end_data_row = aux_col_row - 1
+                aux_col_row += 2  # Espacio entre tablas
+                
+                # Crear gráfico
+                chart = PieChart()
+                chart.title = f"Ventas por Hora - {date_key}"
+                chart.height = 12
                 chart.width = 18
-                chart.legend = None  # Quitamos la leyenda porque solo hay 1 serie
-
-                # Datos numéricos: Columna D ("Cant Venta") desde b_start hasta b_end
-                data_ref = Reference(
-                    ws, min_col=4, min_row=b_start - 1, max_row=b_end)
-                # Categorías (Eje X): Columna A ("Producto")
-                cats_ref = Reference(
-                    ws, min_col=1, min_row=b_start, max_row=b_end)
-
+                
+                # Referencias a los datos
+                data_ref = Reference(ws, min_col=12, min_row=start_data_row - 1, max_row=end_data_row)
+                cats_ref = Reference(ws, min_col=11, min_row=start_data_row, max_row=end_data_row)
+                
                 chart.add_data(data_ref, titles_from_data=True)
                 chart.set_categories(cats_ref)
-
-                # Añadir la gráfica en la columna F, alineada con su bloque de datos
-                ws.add_chart(chart, f"F{chart_placement_row}")
-
-                # Desplazar la posición de la siguiente gráfica hacia abajo para que no se encimen
-                chart_placement_row += 25
+                
+                # Configurar etiquetas
+                chart.dataLabels = DataLabelList()
+                chart.dataLabels.showCatName = False
+                chart.dataLabels.showVal = True
+                
+                ws.add_chart(chart, f"F{chart_row}")
+                chart_row += 25
 
             # Ajuste de ancho de columnas automático
             for column in ws.columns:
-
                 try:
-                    # Evitar que tome en cuenta celdas combinadas largas para calcular el ancho
                     width = max(
                         len(str(cell.value or ""))
                         for cell in column
                         if cell.coordinate not in ws.merged_cells
                     )
-
-                    ws.column_dimensions[
-                        column[
-                            0
-                        ]
-                        .column_letter
-                    ].width = (
-                        max(width, 10)
-                        +
-                        4
-                    )
-
+                    ws.column_dimensions[column[0].column_letter].width = max(
+                        width, 10) + 4
                 except:
                     pass

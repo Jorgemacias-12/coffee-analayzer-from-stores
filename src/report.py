@@ -409,11 +409,22 @@ def export_reports(
                 aux_col_row += 1
 
                 start_data_row = aux_col_row
+
+                max_value = -1
+                posicion_maxima = 0
+                contador_posicion = 0
+
                 for _, row_data in date_data.iterrows():
+                    val_venta = int(row_data["Cant Venta"])
                     ws.cell(aux_col_row, 11).value = row_data["Hora"]
-                    ws.cell(aux_col_row, 12).value = int(
-                        row_data["Cant Venta"])
+                    ws.cell(aux_col_row, 12).value = val_venta
+
+                    if val_venta > max_value:
+                        max_value = val_venta
+                        posicion_maxima = contador_posicion
+
                     aux_col_row += 1
+                    contador_posicion += 1
 
                 end_data_row = aux_col_row - 1
                 aux_col_row += 2  # Espacio entre tablas
@@ -421,7 +432,6 @@ def export_reports(
                 # Crear gráfico
                 chart = PieChart()
                 chart.title = f"{date_key} - Ventas por Intervalo de tiempo"
-                # chart.title = f"Ventas por Hora - {date_key}"
                 chart.height = 12
                 chart.width = 18
 
@@ -434,7 +444,26 @@ def export_reports(
                 chart.add_data(data_ref, titles_from_data=True)
                 chart.set_categories(cats_ref)
 
-                # Configurar etiquetas
+                # --- CORRECCIÓN DEFINITIVA DE COLORES ---
+                slice_series = chart.series[0]
+                lista_datapoints = []
+
+                # Creamos una estructura DataPoint para CADA rebanada del día
+                for i in range(contador_posicion):
+                    dp = DataPoint(idx=i)
+                    if i == posicion_maxima:
+                        # Forzamos color rojo solo a la porción con el pico de ventas
+                        dp.graphicalProperties.solidFill = "FF0000"
+                    else:
+                        # Dejamos que Excel maneje de manera limpia el color automático para el resto
+                        dp.graphicalProperties.solidFill = None
+                    lista_datapoints.append(dp)
+
+                # Asignamos la colección completa a la serie
+                slice_series.dataPoints = lista_datapoints
+                # ----------------------------------------
+
+                # Configurar etiquetas para mostrar CANTIDAD y no porcentaje
                 chart.dataLabels = DataLabelList()
                 chart.dataLabels.showCatName = False
                 chart.dataLabels.showPercent = False

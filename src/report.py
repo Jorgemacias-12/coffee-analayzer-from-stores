@@ -353,84 +353,93 @@ def export_reports(
                 start_row = row + 1
 
             # --- GRÁFICOS SIMPLES Y DIRECTOS ---
-            
+
             # Calcular totales por fecha/hora desde raw_report
             raw_report["Cant Venta"] = pd.to_numeric(
                 raw_report["Cant Venta"], errors="coerce").fillna(0).astype(int)
-            
-            hourly_totals = raw_report.groupby(["Fecha", "Hora"])["Cant Venta"].sum().reset_index()
-            
+
+            hourly_totals = raw_report.groupby(["Fecha", "Hora"])[
+                "Cant Venta"].sum().reset_index()
+
             # Obtener bloques de fechas (detectar dónde cambia la fecha en el Excel)
             date_blocks = {}
             current_date = None
             block_start = 2
-            
+
             for row in range(2, ws.max_row + 1):
                 cell_date = ws.cell(row, 2).value
-                
+
                 if cell_date is None or cell_date == "Fecha":
                     continue
-                
-                cell_date_str = str(cell_date).split()[0]  # Extraer solo la fecha, sin hora
-                
+
+                # Extraer solo la fecha, sin hora
+                cell_date_str = str(cell_date).split()[0]
+
                 if current_date != cell_date_str:
                     if current_date is not None:
                         if current_date not in date_blocks:
                             date_blocks[current_date] = []
-                        date_blocks[current_date].append((block_start, row - 1))
-                    
+                        date_blocks[current_date].append(
+                            (block_start, row - 1))
+
                     current_date = cell_date_str
                     block_start = row
-            
+
             # Agregar el último bloque
             if current_date is not None and current_date not in date_blocks:
                 date_blocks[current_date] = []
             if current_date is not None:
                 date_blocks[current_date].append((block_start, ws.max_row))
-            
+
             # Generar gráficos para cada fecha
             chart_row = 2
             aux_col_row = 2
-            
+
             for date_key in sorted(date_blocks.keys()):
                 # Obtener datos de esta fecha
-                date_data = hourly_totals[hourly_totals["Fecha"].astype(str).str.contains(date_key)]
-                
+                date_data = hourly_totals[hourly_totals["Fecha"].astype(
+                    str).str.contains(date_key)]
+
                 if date_data.empty:
                     continue
-                
+
                 # Escribir tabla auxiliar
                 ws.cell(aux_col_row, 11).value = "Hora"
                 ws.cell(aux_col_row, 12).value = "Ventas"
                 aux_col_row += 1
-                
+
                 start_data_row = aux_col_row
                 for _, row_data in date_data.iterrows():
                     ws.cell(aux_col_row, 11).value = row_data["Hora"]
-                    ws.cell(aux_col_row, 12).value = int(row_data["Cant Venta"])
+                    ws.cell(aux_col_row, 12).value = int(
+                        row_data["Cant Venta"])
                     aux_col_row += 1
-                
+
                 end_data_row = aux_col_row - 1
                 aux_col_row += 2  # Espacio entre tablas
-                
+
                 # Crear gráfico
                 chart = PieChart()
-                chart.title = f"Ventas por Hora - {date_key}"
+                chart.title = f"{date_key} - Ventas por Intervalo de tiempo"
+                # chart.title = f"Ventas por Hora - {date_key}"
                 chart.height = 12
                 chart.width = 18
-                
+
                 # Referencias a los datos
-                data_ref = Reference(ws, min_col=12, min_row=start_data_row - 1, max_row=end_data_row)
-                cats_ref = Reference(ws, min_col=11, min_row=start_data_row, max_row=end_data_row)
-                
+                data_ref = Reference(
+                    ws, min_col=12, min_row=start_data_row - 1, max_row=end_data_row)
+                cats_ref = Reference(
+                    ws, min_col=11, min_row=start_data_row, max_row=end_data_row)
+
                 chart.add_data(data_ref, titles_from_data=True)
                 chart.set_categories(cats_ref)
-                
+
                 # Configurar etiquetas
                 chart.dataLabels = DataLabelList()
                 chart.dataLabels.showCatName = False
+                chart.dataLabels.showPercent = False
                 chart.dataLabels.showVal = True
-                
+
                 ws.add_chart(chart, f"F{chart_row}")
                 chart_row += 25
 
